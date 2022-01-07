@@ -4,8 +4,6 @@
 #include <shop>
 #include <vip_core>
 
-Menu hMainMenu;
-
 int iMode;
 
 enum
@@ -60,12 +58,18 @@ enum struct Player
 
 Player Players[MAXPLAYERS + 1];
 
+bool bLate;
 public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max)
 {
+	bLate = late;
 	if (late)
 	{
 		if (LibraryExists("shop"))
+		{
 			iMode |= LOAD_SHOP;
+			
+			if (Shop_IsStarted())Shop_Started();
+		}
 		if (LibraryExists("vip_core"))
 			iMode |= LOAD_VIP;
 	}
@@ -75,7 +79,8 @@ public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max
 
 public void Shop_Started()
 {
-	iShopCategory = Shop_RegisterCategory("skybox", "Скайбоксы", "Скайбоксы", OnShopDisplay)
+	iShopCategory = Shop_RegisterCategory("skybox", "Скайбоксы", "Скайбоксы", OnShopDisplay);
+	LoadConfig();
 }
 
 public bool OnShopDisplay(int iClient, CategoryId category_id, const char[] category, const char[] name, char[] buffer, int maxlen, ShopMenu menu)
@@ -88,6 +93,14 @@ public void OnPluginStart()
 {
 	hSkybox = FindConVar("sv_skyname");
 	hSelectCookie = new Cookie("skybox_selected", "", CookieAccess_Private);
+	
+	if (!bLate)
+	{
+		if (!LibraryExists("shop"))
+		{
+			Shop_Started();
+		}
+	}
 }
 
 public void OnLibraryAdded(const char[] lib)
@@ -180,7 +193,6 @@ void LoadConfig()
 			skyboxList[skyboxCount].iMode |= LOAD_SHOP;
 			
 			Shop_StartItem(iShopCategory, skyboxList[skyboxCount].sName);
-			Shop_SetItemPrice(iShopCost);
 			Shop_SetCallbacks(OnItemRegistered, OnItemToggled);
 			Shop_EndItem();
 		}
@@ -200,6 +212,7 @@ public void OnItemRegistered(CategoryId category_id, const char[] category, cons
 		if (!strcmp(item, skyboxList[i].sName, false))
 		{
 			skyboxList[i].shopId = item_id;
+			Shop_SetItemPrice(item_id, skyboxList[i].iShopCost);
 			break;
 		}
 	}
@@ -263,6 +276,7 @@ public int MainMenuHandler(Menu menu, MenuAction action, int iClient, int iSkybo
 			delete menu;
 		}
 	}
+	return 0;
 }
 
 
