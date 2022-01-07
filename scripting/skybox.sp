@@ -4,7 +4,6 @@
 #include <shop>
 #include <vip_core>
 
-int iMode;
 
 enum
 {
@@ -45,8 +44,10 @@ int skyboxCount;
 
 Cookie hSelectCookie;
 CategoryId iShopCategory;
-
 ConVar hSkybox;
+int iMode;
+
+#define VIP_FEATURE "skybox"
 
 enum struct Player
 {
@@ -62,18 +63,6 @@ bool bLate;
 public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max)
 {
 	bLate = late;
-	if (late)
-	{
-		if (LibraryExists("shop"))
-		{
-			iMode |= LOAD_SHOP;
-			
-			if (Shop_IsStarted())Shop_Started();
-		}
-		if (LibraryExists("vip_core"))
-			iMode |= LOAD_VIP;
-	}
-	
 	return APLRes_Success;
 }
 
@@ -81,6 +70,17 @@ public void Shop_Started()
 {
 	iShopCategory = Shop_RegisterCategory("skybox", "Скайбоксы", "Скайбоксы", OnShopDisplay);
 	LoadConfig();
+}
+
+public void VIP_OnVIPLoaded()
+{
+	VIP_RegisterFeature(VIP_FEATURE, _, SELECTABLE, OnSelectVIPFeature);
+}
+
+public bool OnSelectVIPFeature(int iClient, const char[] szFeature)
+{
+	OpenSkyBoxesMenu(iClient);
+	return false;
 }
 
 public bool OnShopDisplay(int iClient, CategoryId category_id, const char[] category, const char[] name, char[] buffer, int maxlen, ShopMenu menu)
@@ -96,9 +96,17 @@ public void OnPluginStart()
 	
 	if (!bLate)
 	{
-		if (!LibraryExists("shop"))
+		if (LibraryExists("shop"))
 		{
-			Shop_Started();
+			iMode |= LOAD_SHOP;
+			
+			if (Shop_IsStarted())Shop_Started();
+		} else LoadConfig();
+		if (LibraryExists("vip_core"))
+		{
+			iMode |= LOAD_VIP;
+			
+			if (VIP_IsVIPLoaded())VIP_OnVIPLoaded();
 		}
 	}
 }
@@ -229,6 +237,7 @@ public ShopAction OnItemToggled(int iClient, CategoryId category_id, const char[
 	if (isOn)
 	{
 		SetSkybox(iClient, iSkybox);
+		SaveSkybox(iClient);
 	} else
 	{
 		DisableSkybox(iClient);
@@ -260,7 +269,7 @@ public int MainMenuHandler(Menu menu, MenuAction action, int iClient, int iSkybo
 				{
 					Players[iClient].iSelectedSkybox = iSkybox;
 					SetSkybox(iClient, iSkybox);
-					
+					SaveSkybox(iClient);
 				} else
 					if (!IsSHOPSkybox(iSkybox))
 				{
@@ -283,6 +292,11 @@ public int MainMenuHandler(Menu menu, MenuAction action, int iClient, int iSkybo
 public void OnPluginEnd()
 {
 	if (SHOP_Loaded())Shop_UnregisterMe();
+}
+
+void SaveSkybox(int iClient)
+{
+	hSelectCookie.Set(iClient, skyboxList[Players[iClient].iSelectedSkybox].sName);
 }
 
 void SetSkybox(int iClient, int iSkybox)
