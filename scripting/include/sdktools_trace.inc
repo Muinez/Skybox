@@ -81,10 +81,6 @@
 
 /**
  * @section Trace masks.
- 
- CONTENTS_GRATE - Base walls
- CONTENTS_PLAYERCLIP - Shot through walls
- 
  */
 #define MASK_ALL                    (0xFFFFFFFF)
 #define MASK_SOLID                  (CONTENTS_SOLID|CONTENTS_MOVEABLE|CONTENTS_WINDOW|CONTENTS_MONSTER|CONTENTS_GRATE)                      /**< everything that is normally solid */
