@@ -1,9 +1,16 @@
 #include <clientprefs>
+#include <sdktools>
 
 #undef REQUIRE_PLUGIN
 #include <shop>
 #include <vip_core>
 
+
+int m_skybox3dAreaOffs;
+int m_hObserverTargetOffs;
+int m_iObserverModeOffs;
+
+char sDefaultSkybox[64];
 
 enum
 {
@@ -23,6 +30,7 @@ enum struct Skybox
 	ItemId shopId;
 	
 	int iShopCost;
+	int iShopDuration;
 	char sAccessGroups[512];
 }
 
@@ -39,8 +47,8 @@ int skyboxCount;
 #define IsVIPSkybox(%1)				(skyboxList[%1].iMode & LOAD_VIP)
 #define IsSHOPSkybox(%1) 			(skyboxList[%1].iMode & LOAD_SHOP)
 
-#define CheckVIPAccess(%1,%2)		(Shop_IsClientHasItem(%1, skyboxList[%2].shopId))
-#define CheckSHOPAccess(%1,%2)		(StrContains(skyboxList[iSkyboxIndex].sAccessGroups, Players[iClient].sVipGroup, false) != -1)
+#define CheckSHOPAccess(%1,%2)		(Shop_IsClientHasItem(%1, skyboxList[%2].shopId))
+#define CheckVIPAccess(%1,%2)		(Players[%1].sVipGroup[0] && StrContains(skyboxList[%2].sAccessGroups, Players[%1].sVipGroup, false) != -1)
 
 Cookie hSelectCookie;
 CategoryId iShopCategory;
@@ -54,6 +62,7 @@ enum struct Player
 	int iSelectedSkybox;
 	int iLoadingState;
 	
+	int iActiveSkybox;
 	char sVipGroup[64];
 }
 
@@ -68,12 +77,15 @@ public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max
 
 public void Shop_Started()
 {
-	iShopCategory = Shop_RegisterCategory("skybox", "Скайбоксы", "Скайбоксы", OnShopDisplay);
+	
+	
+	iShopCategory = Shop_RegisterCategory("skybox", "Скайбоксы", "Скайбоксы", .cat_select = OnShopSelect);
 	LoadConfig();
 }
 
 public void VIP_OnVIPLoaded()
 {
+	VIP_IsValidFeature(VIP_FEATURE) && VIP_UnregisterFeature(VIP_FEATURE);
 	VIP_RegisterFeature(VIP_FEATURE, _, SELECTABLE, OnSelectVIPFeature);
 }
 
@@ -83,7 +95,7 @@ public bool OnSelectVIPFeature(int iClient, const char[] szFeature)
 	return false;
 }
 
-public bool OnShopDisplay(int iClient, CategoryId category_id, const char[] category, const char[] name, char[] buffer, int maxlen, ShopMenu menu)
+public bool OnShopSelect(int iClient, CategoryId category_id, const char[] category, ShopMenu menu)
 {
 	OpenSkyBoxesMenu(iClient);
 	return false;
@@ -91,10 +103,16 @@ public bool OnShopDisplay(int iClient, CategoryId category_id, const char[] cate
 
 public void OnPluginStart()
 {
+	m_skybox3dAreaOffs = FindSendPropInfo("CBasePlayer", "m_skybox3d.area");
+	m_hObserverTargetOffs = FindSendPropInfo("CBasePlayer", "m_hObserverTarget");
+	m_iObserverModeOffs = FindSendPropInfo("CBasePlayer", "m_iObserverMode");
+	
 	hSkybox = FindConVar("sv_skyname");
+	hSkybox.AddChangeHook(OnSkyboxChanged);
+	hSkybox.GetString(sDefaultSkybox, sizeof sDefaultSkybox);
 	hSelectCookie = new Cookie("skybox_selected", "", CookieAccess_Private);
 	
-	if (!bLate)
+	if (bLate)
 	{
 		if (LibraryExists("shop"))
 		{
@@ -108,7 +126,33 @@ public void OnPluginStart()
 			
 			if (VIP_IsVIPLoaded())VIP_OnVIPLoaded();
 		}
+		
+		for (int i = 1; i < MaxClients + 1; i++)
+		{
+			if (IsClientInGame(i) && !IsFakeClient(i))
+			{
+				OnClientConnected(i);
+				
+				if (AreClientCookiesCached(i))OnClientCookiesCached(i);
+				if (Shop_IsAuthorized(i))Shop_OnAuthorized(i);
+				VIP_CheckClient(i);
+				
+			}
+		}
 	}
+	
+	RegConsoleCmd("sm_skybox", CMD_Skybox);
+}
+
+public Action CMD_Skybox(int iClient, int iArgs)
+{
+	OpenSkyBoxesMenu(iClient);
+	return Plugin_Handled;
+}
+
+public void OnSkyboxChanged(ConVar cvar, const char[] oldValue, const char[] newValue)
+{
+	strcopy(sDefaultSkybox, sizeof sDefaultSkybox, newValue)
 }
 
 public void OnLibraryAdded(const char[] lib)
@@ -130,15 +174,17 @@ public void OnLibraryRemoved(const char[] lib)
 public void OnClientCookiesCached(int iClient)
 {
 	Players[iClient].iLoadingState |= LOAD_COOKIES;
-	Players[iClient].iSelectedSkybox = -1;
 	char sClientSkybox[64];
 	hSelectCookie.Get(iClient, sClientSkybox, sizeof sClientSkybox);
-	for (int i = 0; i < skyboxCount; i++)
+	if (sClientSkybox[0])
 	{
-		if (!strcmp(skyboxList[i].sName, sClientSkybox, false))
+		for (int i = 0; i < skyboxCount; i++)
 		{
-			Players[iClient].iSelectedSkybox = i;
-			break;
+			if (!strcmp(skyboxList[i].sName, sClientSkybox, false))
+			{
+				Players[iClient].iSelectedSkybox = i;
+				break;
+			}
 		}
 	}
 	
@@ -151,16 +197,25 @@ void CheckLoadingState(int iClient)
 	if (SHOP_Loaded() && !SHOP_ClientLoaded(iClient))return;
 	if (!COOKIES_ClientLoaded(iClient))return;
 	
-	if (!CheckSkyboxAccess(iClient, Players[iClient].iSelectedSkybox))Players[iClient].iSelectedSkybox = -1;
+	if (Players[iClient].iSelectedSkybox != -1)
+	{
+		if (!CheckSkyboxAccess(iClient, Players[iClient].iSelectedSkybox))Players[iClient].iSelectedSkybox = -1;
+		else SetSkybox(iClient, Players[iClient].iSelectedSkybox);
+	}
 }
 
 bool CheckSkyboxAccess(int iClient, int iSkyboxIndex)
 {
-	if (iSkyboxIndex == -1)return true;
 	if (SHOP_Loaded() && CheckSHOPAccess(iClient, iSkyboxIndex))return true;
 	if (VIP_Loaded() && CheckVIPAccess(iClient, iSkyboxIndex))return true;
 	
 	return false;
+}
+
+public void Shop_OnAuthorized(int iClient)
+{
+	Players[iClient].iLoadingState |= LOAD_SHOP;
+	CheckLoadingState(iClient);
 }
 
 public void VIP_OnClientLoaded(int iClient, bool bIsVIP)
@@ -177,6 +232,14 @@ public void VIP_OnVIPClientAdded(int iClient, int iAdmin)
 
 public void VIP_OnVIPClientRemoved(int iClient, const char[] szReason, int iAdmin)
 {
+	Players[iClient].sVipGroup[0] = '\0';
+}
+
+public void OnClientConnected(int iClient)
+{
+	Players[iClient].iLoadingState = 0;
+	Players[iClient].iSelectedSkybox = -1;
+	Players[iClient].iActiveSkybox = -1;
 	Players[iClient].sVipGroup[0] = '\0';
 }
 
@@ -202,8 +265,9 @@ void LoadConfig()
 			
 			Shop_StartItem(iShopCategory, skyboxList[skyboxCount].sName);
 			Shop_SetCallbacks(OnItemRegistered, OnItemToggled);
+			Shop_SetInfo(skyboxList[skyboxCount].sDisplayName, "", iShopCost, -1, Item_Togglable, hKv.GetNum("shop_duration", 0));
 			Shop_EndItem();
-		}
+		} else skyboxList[skyboxCount].shopId = view_as<ItemId>(-1);
 		hKv.GetString("vip_groups", skyboxList[skyboxCount].sAccessGroups, Skybox::sAccessGroups);
 		if (skyboxList[skyboxCount].sAccessGroups[0])
 		{
@@ -220,7 +284,6 @@ public void OnItemRegistered(CategoryId category_id, const char[] category, cons
 		if (!strcmp(item, skyboxList[i].sName, false))
 		{
 			skyboxList[i].shopId = item_id;
-			Shop_SetItemPrice(item_id, skyboxList[i].iShopCost);
 			break;
 		}
 	}
@@ -234,13 +297,26 @@ public ShopAction OnItemToggled(int iClient, CategoryId category_id, const char[
 		if (item_id == skyboxList[iSkybox].shopId)break;
 	}
 	
-	if (isOn)
+	if (isOn || elapsed)
 	{
-		SetSkybox(iClient, iSkybox);
-		SaveSkybox(iClient);
-	} else
-	{
+		Players[iClient].iSelectedSkybox = -1;
 		DisableSkybox(iClient);
+		return Shop_UseOff;
+	}
+	
+	DisableShopSkyboxItem(iClient);
+	Players[iClient].iSelectedSkybox = iSkybox;
+	SetSkybox(iClient, iSkybox);
+	SaveSkybox(iClient);
+	return Shop_UseOn;
+}
+
+void DisableShopSkyboxItem(int iClient)
+{
+	int iCurrentSkybox = Players[iClient].iSelectedSkybox;
+	if (iCurrentSkybox != -1 && skyboxList[iCurrentSkybox].shopId != view_as<ItemId>(-1))
+	{
+		Shop_ToggleClientItem(iClient, skyboxList[iCurrentSkybox].shopId, Toggle_Off);
 	}
 }
 
@@ -249,9 +325,54 @@ void OpenSkyBoxesMenu(iClient)
 	Menu hMenu = new Menu(MainMenuHandler);
 	hMenu.SetTitle("  Скайбоксы");
 	
+	char sTempDisplay[96];
 	for (int i = 0; i < skyboxCount; i++)
 	{
-		hMenu.AddItem(NULL_STRING, skyboxList[i].sDisplayName, (!IsSHOPSkybox(i) && IsVIPSkybox(i) && !CheckVIPAccess(iClient, i)) ? ITEMDRAW_DISABLED:ITEMDRAW_DEFAULT);
+		if (i == Players[iClient].iSelectedSkybox)
+		{
+			Format(sTempDisplay, sizeof sTempDisplay, "%s ✓", skyboxList[i].sDisplayName);
+			hMenu.AddItem(NULL_STRING, sTempDisplay);
+		} else if (IsVIPSkybox(i))
+		{
+			if (!CheckVIPAccess(iClient, i))
+			{
+				if (IsSHOPSkybox(i))
+				{
+					if (!IsSHOPSkybox(i))
+					{
+						Format(sTempDisplay, sizeof sTempDisplay, "[ VIP ] %s", skyboxList[i].sDisplayName);
+						hMenu.AddItem(NULL_STRING, sTempDisplay, ITEMDRAW_DISABLED);
+					} else
+					{
+						if (CheckSHOPAccess(iClient, i))
+						{
+							hMenu.AddItem(NULL_STRING, skyboxList[i].sDisplayName);
+						} else
+						{
+							Format(sTempDisplay, sizeof sTempDisplay, "[ %iкр. ] %s", skyboxList[i].iShopCost, skyboxList[i].sDisplayName);
+							hMenu.AddItem(NULL_STRING, sTempDisplay);
+						}
+					}
+				} else
+				{
+					Format(sTempDisplay, sizeof sTempDisplay, "[ VIP ] %s", skyboxList[i].sDisplayName);
+					hMenu.AddItem(NULL_STRING, sTempDisplay, ITEMDRAW_DISABLED);
+				}
+			} else
+			{
+				hMenu.AddItem(NULL_STRING, skyboxList[i].sDisplayName);
+			}
+		} else
+		{
+			if (CheckSHOPAccess(iClient, i))
+			{
+				hMenu.AddItem(NULL_STRING, skyboxList[i].sDisplayName);
+			} else
+			{
+				Format(sTempDisplay, sizeof sTempDisplay, "[ %iкр. ] %s", skyboxList[i].iShopCost, skyboxList[i].sDisplayName);
+				hMenu.AddItem(NULL_STRING, sTempDisplay);
+			}
+		}
 	}
 	
 	hMenu.Display(iClient, 0);
@@ -267,13 +388,17 @@ public int MainMenuHandler(Menu menu, MenuAction action, int iClient, int iSkybo
 			{
 				if (CheckVIPAccess(iClient, iSkybox))
 				{
+					DisableShopSkyboxItem(iClient);
 					Players[iClient].iSelectedSkybox = iSkybox;
 					SetSkybox(iClient, iSkybox);
 					SaveSkybox(iClient);
+					OpenSkyBoxesMenu(iClient);
+					return 0;
 				} else
 					if (!IsSHOPSkybox(iSkybox))
 				{
 					PrintToChat(iClient, " \x07У вас нет доступа");
+					OpenSkyBoxesMenu(iClient)
 					return 0;
 				}
 			}
@@ -292,6 +417,7 @@ public int MainMenuHandler(Menu menu, MenuAction action, int iClient, int iSkybo
 public void OnPluginEnd()
 {
 	if (SHOP_Loaded())Shop_UnregisterMe();
+	if (VIP_Loaded())VIP_UnregisterMe();
 }
 
 void SaveSkybox(int iClient)
@@ -301,13 +427,81 @@ void SaveSkybox(int iClient)
 
 void SetSkybox(int iClient, int iSkybox)
 {
+	SetEntData(iClient, m_skybox3dAreaOffs, 255);
 	hSkybox.ReplicateToClient(iClient, skyboxList[iSkybox].sName);
+	Players[iClient].iActiveSkybox = iSkybox;
 }
 
 void DisableSkybox(int iClient)
 {
-	char sBuffer[64];
-	hSkybox.GetString(sBuffer, sizeof sBuffer);
+	SetEntData(iClient, m_skybox3dAreaOffs, 0);
+	hSkybox.ReplicateToClient(iClient, sDefaultSkybox);
+	Players[iClient].iActiveSkybox = -1;
+}
+
+public void OnMapStart()
+{
+	for (int i = 0; i < skyboxCount; i++)
+	{
+		AddSkybox(skyboxList[i].sName);
+	}
+}
+
+void AddSkybox(char[] sName)
+{
+	static char suffix[][] = {
+		"bk", 
+		"Bk", 
+		"dn", 
+		"Dn", 
+		"ft", 
+		"Ft", 
+		"lf", 
+		"Lf", 
+		"rt", 
+		"Rt", 
+		"up", 
+		"Up", 
+	};
+	static char sBuffer[PLATFORM_MAX_PATH];
+	for (int i = 0; i < sizeof(suffix); ++i)
+	{
+		FormatEx(sBuffer, sizeof(sBuffer), "materials/skybox/%s%s.vtf", sName, suffix[i]);
+		if (FileExists(sBuffer, false))AddFileToDownloadsTable(sBuffer);
+		
+		FormatEx(sBuffer, sizeof(sBuffer), "materials/skybox/%s%s.vmt", sName, suffix[i]);
+		if (FileExists(sBuffer, false))AddFileToDownloadsTable(sBuffer);
+	}
+}
+
+public void OnPlayerRunCmdPost(int iClient)
+{
+	if (IsFakeClient(iClient))return;
 	
-	hSkybox.ReplicateToClient(iClient, sBuffer);
+	static int iOldObsMode[MAXPLAYERS + 1];
+	int iCurrentObsMode = GetEntData(iClient, m_iObserverModeOffs);
+	if (iCurrentObsMode == 4)
+	{
+		int iCurrentTarget = GetEntDataEnt2(iClient, m_hObserverTargetOffs);
+		if (iCurrentTarget < 1)return;
+		
+		int iTargetSkybox = Players[iCurrentTarget].iSelectedSkybox;
+		if (Players[iClient].iActiveSkybox != iTargetSkybox)
+		{
+			if (iTargetSkybox == -1)DisableSkybox(iClient);
+			else SetSkybox(iClient, iTargetSkybox);
+		}
+	} else
+	{
+		if (iOldObsMode[iClient] != 4)
+		{
+			int iCurrentSkybox = Players[iClient].iSelectedSkybox;
+			if (iCurrentSkybox != Players[iClient].iActiveSkybox)
+			{
+				if (iCurrentSkybox == -1)DisableSkybox(iClient);
+				else SetSkybox(iClient, iCurrentSkybox);
+			}
+			iOldObsMode[iClient] = iCurrentObsMode;
+		}
+	}
 } 
