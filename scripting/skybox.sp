@@ -5,7 +5,6 @@
 #include <shop>
 #include <vip_core>
 
-
 int m_skybox3dAreaOffs;
 int m_hObserverTargetOffs;
 int m_iObserverModeOffs;
@@ -25,7 +24,6 @@ enum struct Skybox
 	char sDisplayName[64];
 	
 	int iMode;
-	
 	
 	ItemId shopId;
 	
@@ -63,6 +61,7 @@ enum struct Player
 	int iLoadingState;
 	
 	int iActiveSkybox;
+	int iMenuSkybox;
 	char sVipGroup[64];
 }
 
@@ -77,9 +76,7 @@ public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max
 
 public void Shop_Started()
 {
-	
-	
-	iShopCategory = Shop_RegisterCategory("skybox", "Скайбоксы", "Скайбоксы", .cat_select = OnShopSelect);
+	iShopCategory = Shop_RegisterCategory("skybox", "Скайбоксы", "Небо", .cat_select = OnShopSelect);
 	LoadConfig();
 }
 
@@ -304,19 +301,19 @@ public ShopAction OnItemToggled(int iClient, CategoryId category_id, const char[
 		return Shop_UseOff;
 	}
 	
-	DisableShopSkyboxItem(iClient);
+	ToggleShopSkyboxItem(iClient, Toggle_Off);
 	Players[iClient].iSelectedSkybox = iSkybox;
 	SetSkybox(iClient, iSkybox);
 	SaveSkybox(iClient);
 	return Shop_UseOn;
 }
 
-void DisableShopSkyboxItem(int iClient)
+void ToggleShopSkyboxItem(int iClient, ToggleState toggle)
 {
 	int iCurrentSkybox = Players[iClient].iSelectedSkybox;
 	if (iCurrentSkybox != -1 && skyboxList[iCurrentSkybox].shopId != view_as<ItemId>(-1))
 	{
-		Shop_ToggleClientItem(iClient, skyboxList[iCurrentSkybox].shopId, Toggle_Off);
+		Shop_ToggleClientItem(iClient, skyboxList[iCurrentSkybox].shopId, toggle);
 	}
 }
 
@@ -332,78 +329,21 @@ void OpenSkyBoxesMenu(iClient)
 		{
 			Format(sTempDisplay, sizeof sTempDisplay, "%s ✓", skyboxList[i].sDisplayName);
 			hMenu.AddItem(NULL_STRING, sTempDisplay);
-		} else if (IsVIPSkybox(i))
-		{
-			if (!CheckVIPAccess(iClient, i))
-			{
-				if (IsSHOPSkybox(i))
-				{
-					if (!IsSHOPSkybox(i))
-					{
-						Format(sTempDisplay, sizeof sTempDisplay, "[ VIP ] %s", skyboxList[i].sDisplayName);
-						hMenu.AddItem(NULL_STRING, sTempDisplay, ITEMDRAW_DISABLED);
-					} else
-					{
-						if (CheckSHOPAccess(iClient, i))
-						{
-							hMenu.AddItem(NULL_STRING, skyboxList[i].sDisplayName);
-						} else
-						{
-							Format(sTempDisplay, sizeof sTempDisplay, "[ %iкр. ] %s", skyboxList[i].iShopCost, skyboxList[i].sDisplayName);
-							hMenu.AddItem(NULL_STRING, sTempDisplay);
-						}
-					}
-				} else
-				{
-					Format(sTempDisplay, sizeof sTempDisplay, "[ VIP ] %s", skyboxList[i].sDisplayName);
-					hMenu.AddItem(NULL_STRING, sTempDisplay, ITEMDRAW_DISABLED);
-				}
-			} else
-			{
-				hMenu.AddItem(NULL_STRING, skyboxList[i].sDisplayName);
-			}
 		} else
-		{
-			if (CheckSHOPAccess(iClient, i))
-			{
-				hMenu.AddItem(NULL_STRING, skyboxList[i].sDisplayName);
-			} else
-			{
-				Format(sTempDisplay, sizeof sTempDisplay, "[ %iкр. ] %s", skyboxList[i].iShopCost, skyboxList[i].sDisplayName);
-				hMenu.AddItem(NULL_STRING, sTempDisplay);
-			}
-		}
+			hMenu.AddItem(NULL_STRING, skyboxList[i].sDisplayName);
 	}
 	
 	hMenu.Display(iClient, 0);
 }
 
-public int MainMenuHandler(Menu menu, MenuAction action, int iClient, int iSkybox)
+public int MainMenuHandler(Menu menu, MenuAction action, int iClient, int iItem)
 {
 	switch (action)
 	{
 		case MenuAction_Select:
 		{
-			if (IsVIPSkybox(iSkybox))
-			{
-				if (CheckVIPAccess(iClient, iSkybox))
-				{
-					DisableShopSkyboxItem(iClient);
-					Players[iClient].iSelectedSkybox = iSkybox;
-					SetSkybox(iClient, iSkybox);
-					SaveSkybox(iClient);
-					OpenSkyBoxesMenu(iClient);
-					return 0;
-				} else
-					if (!IsSHOPSkybox(iSkybox))
-				{
-					PrintToChat(iClient, " \x07У вас нет доступа");
-					OpenSkyBoxesMenu(iClient)
-					return 0;
-				}
-			}
-			
-			Shop_ShowItemPanel(iClient, skyboxList[iSkybox].shopId);
+			Players[iClient].iMenuSkybox = iItem;
+			OpenSkyBoxMenu(iClient);
 		}
 		case MenuAction_End:
 		{
@@ -413,6 +353,97 @@ public int MainMenuHandler(Menu menu, MenuAction action, int iClient, int iSkybo
 	return 0;
 }
 
+void OpenSkyBoxMenu(int iClient)
+{
+	int iCurrentSkybox = Players[iClient].iMenuSkybox;
+	Menu hMenu = new Menu(SkyboxMenuHandler);
+	hMenu.SetTitle(skyboxList[iCurrentSkybox].sDisplayName);
+	
+	if (Players[iClient].iSelectedSkybox == iCurrentSkybox)
+		hMenu.AddItem(NULL_STRING, "Выключить\n \n ");
+	else
+	{
+		if ((IsVIPSkybox(iCurrentSkybox) && CheckVIPAccess(iClient, iCurrentSkybox)) || (IsSHOPSkybox(iCurrentSkybox) && CheckSHOPAccess(iClient, iCurrentSkybox)))
+		{
+			hMenu.AddItem(NULL_STRING, "Включить\n \n ");
+		} else
+		{
+			hMenu.AddItem(NULL_STRING, "Включить\n \n ", ITEMDRAW_DISABLED);
+		}
+	}
+	
+	if (IsSHOPSkybox(iCurrentSkybox))
+	{
+		hMenu.AddItem(NULL_STRING, "Информация в магазине");
+	}
+	
+	hMenu.ExitBackButton = true;
+	
+	hMenu.Display(iClient, 0);
+}
+
+public int SkyboxMenuHandler(Menu menu, MenuAction action, int iClient, int iItem)
+{
+	switch (action)
+	{
+		case MenuAction_Select:
+		{
+			int iSkybox = Players[iClient].iMenuSkybox;
+			
+			if (iItem == 1)
+			{
+				Shop_ShowItemPanel(iClient, skyboxList[iSkybox].shopId);
+				return 0;
+			}
+			
+			if (iSkybox == Players[iClient].iSelectedSkybox)
+			{
+				ToggleShopSkyboxItem(iClient, Toggle_Off);
+				Players[iClient].iSelectedSkybox = -1;
+				DisableSkybox(iClient);
+				
+				OpenSkyBoxMenu(iClient);
+				return 0;
+			}
+			
+			if (IsVIPSkybox(iSkybox) && CheckVIPAccess(iClient, iSkybox))
+			{
+				ToggleShopSkyboxItem(iClient, Toggle_Off);
+				Players[iClient].iSelectedSkybox = iSkybox;
+				ToggleShopSkyboxItem(iClient, Toggle_On);
+				SetSkybox(iClient, iSkybox);
+				SaveSkybox(iClient);
+				OpenSkyBoxMenu(iClient);
+				return 0;
+			} else if (IsSHOPSkybox(iSkybox) && CheckSHOPAccess(iClient, iSkybox))
+			{
+				ToggleShopSkyboxItem(iClient, Toggle_Off);
+				Players[iClient].iSelectedSkybox = iSkybox;
+				ToggleShopSkyboxItem(iClient, Toggle_On);
+				SetSkybox(iClient, iSkybox);
+				SaveSkybox(iClient);
+				OpenSkyBoxMenu(iClient);
+				return 0;
+			} else
+			{
+				PrintToChat(iClient, " \x07У вас нет доступа");
+				OpenSkyBoxMenu(iClient)
+				return 0;
+			}
+			
+		}
+		case MenuAction_End:
+		{
+			delete menu;
+		}
+		case MenuAction_Cancel:
+		{
+			if(iItem == MenuCancel_ExitBack)
+				OpenSkyBoxesMenu(iClient);
+		}
+	}
+	return 0;
+}
 
 public void OnPluginEnd()
 {
