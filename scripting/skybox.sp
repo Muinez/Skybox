@@ -409,6 +409,7 @@ public int SkyboxMenuHandler(Menu menu, MenuAction action, int iClient, int iIte
 				ToggleShopSkyboxItem(iClient, Toggle_Off);
 				Players[iClient].iSelectedSkybox = -1;
 				DisableSkybox(iClient);
+				hSelectCookie.Set(iClient, "");
 				
 				OpenSkyBoxMenu(iClient);
 				return 0;
