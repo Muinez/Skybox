@@ -230,6 +230,14 @@ public void VIP_OnVIPClientAdded(int iClient, int iAdmin)
 public void VIP_OnVIPClientRemoved(int iClient, const char[] szReason, int iAdmin)
 {
 	Players[iClient].sVipGroup[0] = '\0';
+	
+	int iCurrentSkybox = Players[iClient].iSelectedSkybox;
+	if (iCurrentSkybox != -1 && IsVIPSkybox(Players[iClient].iSelectedSkybox))
+	{
+		Players[iClient].iSelectedSkybox = -1;
+		if (Players[iClient].iActiveSkybox == iCurrentSkybox)
+			DisableSkybox(iClient);
+	}
 }
 
 public void OnClientConnected(int iClient)
@@ -438,7 +446,7 @@ public int SkyboxMenuHandler(Menu menu, MenuAction action, int iClient, int iIte
 		}
 		case MenuAction_Cancel:
 		{
-			if(iItem == MenuCancel_ExitBack)
+			if (iItem == MenuCancel_ExitBack)
 				OpenSkyBoxesMenu(iClient);
 		}
 	}
